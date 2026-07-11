@@ -39,12 +39,13 @@ export default function Home() {
   const [freezes, setFreezes] = useState(0);
   const [theme, setTheme] = useState("classic");
   const [unlockedThemes, setUnlockedThemes] = useState<string[]>(["classic"]);
+  const [previewTheme, setPreviewTheme] = useState<string | null>(null);
   const [showAdd, setShowAdd] = useState(false);
   const [showChannel, setShowChannel] = useState(false);
   const completed = tasks.filter((task) => task.status === "done").length;
   const active = tasks.find((task) => task.status === "active");
   const totalMinutes = useMemo(() => tasks.filter((task) => task.status !== "done").reduce((sum, task) => sum + task.duration, 0), [tasks]);
-  const activeTheme = themes.find((item) => item.id === theme) ?? themes[0];
+  const activeTheme = themes.find((item) => item.id === (previewTheme ?? theme)) ?? themes[0];
 
   function startTask(id: number) {
     setTasks((all) => all.map((task) => ({ ...task, status: task.id === id ? "active" : task.status === "active" ? "upcoming" : task.status })));
@@ -71,12 +72,14 @@ export default function Home() {
     if (theme === item.id) return;
     if (unlockedThemes.includes(item.id)) {
       setTheme(item.id);
+      setPreviewTheme(null);
       return setMessage(`${item.name} equipped. Your collection stays yours forever.`);
     }
     if (points < item.cost) return setMessage(`You need ${item.cost - points} more points for ${item.name}.`);
     setPoints((value) => value - item.cost);
     setUnlockedThemes((all) => [...all, item.id]);
     setTheme(item.id);
+    setPreviewTheme(null);
     setMessage(`${item.name} unlocked and equipped. You can switch back to it anytime for free.`);
   }
   function buyFreeze() {
@@ -88,7 +91,7 @@ export default function Home() {
   }
 
   const navItems: Tab[] = ["Overview", "Calendar", "Analytics", "Shop", "Settings"];
-  return <main className={`theme-${theme}`} style={{ "--accent": activeTheme.color } as React.CSSProperties}>
+  return <main className={`theme-${previewTheme ?? theme}`} style={{ "--accent": activeTheme.color } as React.CSSProperties}>
     <aside className="sidebar">
       <button className="brand" onClick={() => setTab("Overview")}><span>✦</span> FLOWPAL</button>
       <p className="brand-sub">STAY IN FLOW.</p>
@@ -102,7 +105,7 @@ export default function Home() {
       {tab === "Overview" && <Overview tasks={tasks} completed={completed} totalMinutes={totalMinutes} active={active} streak={streak} freezes={freezes} points={points} startTask={startTask} finishTask={finishTask} setTab={setTab} />}
       {tab === "Calendar" && <Calendar tasks={tasks} startTask={startTask} />}
       {tab === "Analytics" && <Analytics tasks={tasks} points={points} streak={streak} />}
-      {tab === "Shop" && <Shop points={points} theme={theme} unlockedThemes={unlockedThemes} freezes={freezes} buyTheme={buyTheme} buyFreeze={buyFreeze} />}
+      {tab === "Shop" && <Shop points={points} theme={theme} unlockedThemes={unlockedThemes} freezes={freezes} buyTheme={buyTheme} buyFreeze={buyFreeze} setPreviewTheme={setPreviewTheme} />}
       {tab === "Settings" && <Settings theme={activeTheme.name} freezes={freezes} streak={streak} setMessage={setMessage} setStreak={setStreak} />}
     </section>
     {showAdd && <div className="modal-backdrop"><form className="modal" onSubmit={addTask}><div className="modal-top"><h2>Add a task</h2><button type="button" onClick={() => setShowAdd(false)}>×</button></div><label>Task name<input name="title" placeholder="e.g. Review SAT vocabulary" autoFocus /></label><label>Category<input name="subject" placeholder="School, personal, SAT..." /></label><div className="form-row"><label>Time<input name="time" type="time" defaultValue="18:00" /></label><label>Minutes<input name="duration" type="number" min="5" defaultValue="30" /></label></div><button className="primary-btn" type="submit">Add to my plan →</button></form></div>}
@@ -130,6 +133,6 @@ function MonthCalendar({ tasks, startTask }: { tasks: Task[]; startTask: (id: nu
 
 function Analytics({ tasks, points, streak }: { tasks: Task[]; points: number; streak: number }) { const done = tasks.filter((task) => task.status === "done").length; return <section className="analytics-grid"><article className="metric-card"><small>COMPLETION RATE</small><b>{Math.round((done / tasks.length) * 100)}%</b><p>{done} tasks completed so far.</p></article><article className="metric-card"><small>POINTS EARNED</small><b>{points.toLocaleString()}</b><p>Keep completing tasks for more.</p></article><article className="metric-card"><small>BEST STREAK</small><b>{streak} days</b><p>Your momentum is growing.</p></article><article className="wide-card"><p className="eyebrow">FLOWPAL INSIGHT</p><h2>You usually finish the tasks you start.</h2><p>Use “Start now” when you begin—the app can learn how long your work really takes.</p></article></section>; }
 
-function Shop({ points, theme, unlockedThemes, freezes, buyTheme, buyFreeze }: { points: number; theme: string; unlockedThemes: string[]; freezes: number; buyTheme: (item: typeof themes[number]) => void; buyFreeze: () => void }) { return <section><div className="shop-head"><div><p className="eyebrow">FLOWPAL SHOP · {unlockedThemes.length}/{themes.length} UNLOCKED</p><h2>Make your flow yours.</h2></div><div className="points-pill">✦ {points.toLocaleString()} points</div></div><div className="shop-grid">{themes.map((item) => { const unlocked = unlockedThemes.includes(item.id); return <article className={`shop-item ${item.id}-item`} key={item.id}><div className="theme-swatch" style={{ background: item.color }} /><h3>{item.name}</h3><p>{item.id === theme ? "Currently active" : item.description}</p><button className="start" disabled={item.id === theme} onClick={() => buyTheme(item)}>{item.id === theme ? "Equipped" : unlocked ? "Switch for free" : item.cost ? `Unlock · ${item.cost} ✦` : "Free"}</button></article>; })}<article className="shop-item freeze-card"><div className="freeze-icon">❄</div><h3>Streak freeze</h3><p>Protect one missed day. You have {freezes}.</p><button className="start" onClick={buyFreeze}>150 points</button></article></div></section>; }
+function Shop({ points, theme, unlockedThemes, freezes, buyTheme, buyFreeze, setPreviewTheme }: { points: number; theme: string; unlockedThemes: string[]; freezes: number; buyTheme: (item: typeof themes[number]) => void; buyFreeze: () => void; setPreviewTheme: (theme: string | null) => void }) { return <section><div className="shop-head"><div><p className="eyebrow">FLOWPAL SHOP · {unlockedThemes.length}/{themes.length} UNLOCKED</p><h2>Make your flow yours.</h2></div><div className="points-pill">✦ {points.toLocaleString()} points</div></div><div className="shop-grid">{themes.map((item) => { const unlocked = unlockedThemes.includes(item.id); return <article className={`shop-item ${item.id}-item`} key={item.id}><div className="theme-swatch" style={{ background: item.color }} /><h3>{item.name}</h3><p>{item.id === theme ? "Currently active" : item.description}</p><button className="start" disabled={item.id === theme} onMouseEnter={() => setPreviewTheme(item.id)} onMouseLeave={() => setPreviewTheme(null)} onFocus={() => setPreviewTheme(item.id)} onBlur={() => setPreviewTheme(null)} onClick={() => buyTheme(item)}>{item.id === theme ? "Equipped" : unlocked ? "Switch for free" : item.cost ? `Unlock · ${item.cost} ✦` : "Free"}</button></article>; })}<article className="shop-item freeze-card"><div className="freeze-icon">❄</div><h3>Streak freeze</h3><p>Protect one missed day. You have {freezes}.</p><button className="start" onClick={buyFreeze}>150 points</button></article></div></section>; }
 
 function Settings({ theme, freezes, streak, setMessage, setStreak }: { theme: string; freezes: number; streak: number; setMessage: (message: string) => void; setStreak: (value: number) => void }) { return <section className="settings-card"><p className="eyebrow">SETTINGS</p><h2>Your FlowPal setup</h2><div><b>Companion channel</b><span>LINE connected</span></div><div><b>Current theme</b><span>{theme}</span></div><div><b>Streak protection</b><span>{freezes} freeze{freezes === 1 ? "" : "s"} available</span></div><button className="outline-btn" onClick={() => { setStreak(streak + 1); setMessage("Demo check-in complete. Your streak moved up by one day."); }}>Demo daily check-in</button></section>; }
