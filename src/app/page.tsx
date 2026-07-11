@@ -25,8 +25,8 @@ const themes = [
   { id: "beach", name: "Beach day", color: "#ffd07a", cost: 600, description: "Sunlit sand, surf, and coral buttons." },
   { id: "forest", name: "Forest club", color: "#7acb80", cost: 650, description: "Mossy buttons with a leafy-pattern background." },
   { id: "cafe", name: "Late café", color: "#d4a676", cost: 700, description: "Warm espresso buttons and paper texture." },
-  { id: "mono-black", name: "Midnight mono", color: "#393939", cost: 760, description: "A sharp dark mode with high-contrast buttons." },
-  { id: "mono-white", name: "Studio white", color: "#f5f5f2", cost: 760, description: "Minimal monochrome with outlined buttons." },
+  { id: "mono-black", name: "Midnight mono", color: "#393939", cost: 60, description: "A sharp, affordable dark mode." },
+  { id: "mono-white", name: "Studio white", color: "#f5f5f2", cost: 80, description: "A clean, affordable monochrome mode." },
   { id: "graffiti", name: "Graffiti lab", color: "#dcff42", cost: 900, description: "Neon spray-paint buttons and street-art energy." },
 ];
 
