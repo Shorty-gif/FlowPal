@@ -1,8 +1,8 @@
-# StudyFlow
+# FlowPal
 
 > Stay in flow.
 
-StudyFlow is an AI-powered student productivity companion. It brings Google Classroom assignments, personal tasks, schedule planning, and messaging-based accountability into one experience.
+FlowPal is an AI-powered student productivity companion. It brings Google Classroom assignments, personal tasks, schedule planning, and messaging-based accountability into one experience.
 
 ## Local development
 

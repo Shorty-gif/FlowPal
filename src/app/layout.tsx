@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "StudyFlow — Stay in flow.",
+  title: "FlowPal — Stay in flow.",
   description: "Your AI-powered student productivity companion.",
 };
 
