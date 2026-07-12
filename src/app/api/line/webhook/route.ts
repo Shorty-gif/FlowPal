@@ -41,14 +41,14 @@ async function palReply(text: string, lineUserId?: string) {
             ? `Logged — ${task.title} is complete. Nice work! Check FlowPal for your updated plan.`
             : `Nice — I started ${task.title}. Send “finish ${task.title}” when you’re done.`;
         }
+        return `I can’t find “${requestedTitle}” in your unfinished FlowPal tasks. Send “my tasks” to see the exact task names.`;
       }
     }
   } catch (error) {
     console.error("Could not update FlowPal task from LINE:", error);
   }
 
-  if (message.startsWith("start ")) return `Nice — I started ${requestedTitle}. Send “finish ${requestedTitle}” when you’re done.`;
-  if (message.startsWith("finish ") || message.startsWith("done")) return "Logged! Great work — check FlowPal to see your updated plan.";
+  if (message.startsWith("start ") || message.startsWith("finish ") || message.startsWith("done")) return "I can’t access your task list yet. Open FlowPal once, then send “my tasks” and try the exact task name.";
   if (message.includes("break")) return "Take the break. Open FlowPal when you’re ready and I’ll help you replan.";
   if (message.includes("next") || message.includes("what should")) return "Open FlowPal and ask Pal for your next task. Your live schedule is there.";
   return "I’m Pal from FlowPal. Try “my tasks,” “start Physics,” “finish Physics,” “I need a 30 min break,” or “what’s next?”";
