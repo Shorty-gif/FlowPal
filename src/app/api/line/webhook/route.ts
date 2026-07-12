@@ -1,10 +1,12 @@
 import crypto from "node:crypto";
 import { NextResponse } from "next/server";
+import { getSupabaseServer } from "@/lib/supabase-server";
 
 type LineEvent = {
   type?: string;
   replyToken?: string;
   message?: { type?: string; text?: string };
+  source?: { userId?: string };
 };
 
 function validSignature(body: string, signature: string | null, secret: string) {
@@ -41,8 +43,28 @@ export async function POST(request: Request) {
   const payload = JSON.parse(rawBody) as { events?: LineEvent[] };
   await Promise.all((payload.events ?? []).map(async (event) => {
     if (!event.replyToken) return;
+    const lineUserId = event.source?.userId;
+    const text = event.message?.type === "text" ? event.message.text?.trim() ?? "" : "";
+    const requestedCode = text.match(/^link\s+([a-z0-9]{6})$/i)?.[1]?.toUpperCase();
+    if (lineUserId) {
+      try {
+        const supabase = getSupabaseServer();
+        if (requestedCode) {
+          const { data: profile } = await supabase.from("flowpal_users").select("id").eq("link_code", requestedCode).maybeSingle();
+          if (profile) {
+            await supabase.from("flowpal_users").update({ line_user_id: null }).eq("line_user_id", lineUserId).neq("id", profile.id);
+            await supabase.from("flowpal_users").update({ line_user_id: lineUserId }).eq("id", profile.id);
+            return reply(event.replyToken, "Connected! Pal can now send your FlowPal reminders here.", token);
+          }
+        }
+        await supabase.from("flowpal_users").upsert({ line_user_id: lineUserId }, { onConflict: "line_user_id" });
+      } catch (error) {
+        // LINE replies should still work while the database is being configured.
+        console.error("Could not save FlowPal LINE user:", error);
+      }
+    }
     if (event.type === "follow") return reply(event.replyToken, "Hey, I’m Pal! Message me when you start or finish work, and I’ll keep you moving.", token);
-    if (event.type === "message" && event.message?.type === "text") return reply(event.replyToken, palReply(event.message.text ?? ""), token);
+    if (event.type === "message" && event.message?.type === "text") return reply(event.replyToken, palReply(text), token);
   }));
   return NextResponse.json({ ok: true });
 }

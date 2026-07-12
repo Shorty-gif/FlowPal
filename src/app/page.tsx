@@ -211,6 +211,8 @@ export default function Home() {
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [classroomConnected, setClassroomConnected] = useState(false);
   const [planner, setPlanner] = useState<PlannerSettings>(defaultPlanner);
+  const [databaseReady, setDatabaseReady] = useState(false);
+  const [lineLinkCode, setLineLinkCode] = useState<string | null>(null);
   const completed = tasks.filter((task) => task.status === "done").length;
   const active = tasks.find((task) => task.status === "active");
   const totalMinutes = useMemo(() => tasks.filter((task) => task.status !== "done").reduce((sum, task) => sum + task.duration, 0), [tasks]);
@@ -242,6 +244,38 @@ export default function Home() {
   }, [planner]);
 
   useEffect(() => {
+    fetch("/api/flowpal/profile")
+      .then((response) => response.json())
+      .then((profile: { linkCode?: string }) => {
+        if (profile.linkCode) setLineLinkCode(profile.linkCode);
+        return fetch("/api/flowpal/tasks");
+      })
+      .then((response) => response.json())
+      .then((data: { tasks?: Task[] }) => {
+        if (data.tasks?.length) setTasks(data.tasks);
+        setDatabaseReady(true);
+      })
+      .catch(() => setDatabaseReady(true));
+  }, []);
+
+  useEffect(() => {
+    if (!databaseReady) return;
+    fetch("/api/flowpal/tasks", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tasks }) }).catch(() => undefined);
+  }, [tasks, databaseReady]);
+
+  useEffect(() => {
+    if (!databaseReady || !today) return;
+    const sessions = buildSchedule(tasks, today, planner).map((session) => {
+      const [hours, minutes] = session.time.split(":").map(Number);
+      const starts = new Date(session.date.getFullYear(), session.date.getMonth(), session.date.getDate(), hours, minutes);
+      const ends = new Date(starts.getTime() + session.task.duration * 60_000);
+      return { title: session.task.title, startsAt: starts.toISOString(), endsAt: ends.toISOString() };
+    });
+    fetch("/api/flowpal/sessions", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessions }) }).catch(() => undefined);
+  }, [tasks, planner, today, databaseReady]);
+
+  useEffect(() => {
+    if (!databaseReady) return;
     const query = new URLSearchParams(window.location.search);
     const connectionResult = query.get("classroom");
     const connectionReason = query.get("reason");
@@ -271,7 +305,7 @@ export default function Home() {
         if (connectionResult === "connected") setMessage(`${imported.length} Google Classroom assignment${imported.length === 1 ? "" : "s"} added to your FlowPal plan.`);
       })
       .catch(() => undefined);
-  }, []);
+  }, [databaseReady]);
 
   function startTask(id: Task["id"]) {
     setTasks((all) => all.map((task) => ({ ...task, status: task.id === id ? "active" : task.status === "active" ? "upcoming" : task.status })));
@@ -341,7 +375,7 @@ export default function Home() {
       {tab === "Calendar" && <Calendar tasks={tasks} startTask={startTask} date={currentDate} planner={planner} setPlanner={setPlanner} />}
       {tab === "Analytics" && <Analytics tasks={tasks} points={points} streak={streak} />}
       {tab === "Shop" && <Shop points={points} theme={theme} previewTheme={previewTheme} unlockedThemes={unlockedThemes} freezes={freezes} buyTheme={buyTheme} buyFreeze={buyFreeze} setPreviewTheme={setPreviewTheme} />}
-      {tab === "Settings" && <><button className="outline-btn" onClick={() => { window.localStorage.removeItem("flowpal-onboarding-complete"); setShowOnboarding(true); }}>Run setup again ↗</button><SchoolScheduleSettings planner={planner} setPlanner={setPlanner} /><RecurringAvailabilitySettings planner={planner} setPlanner={setPlanner} /><CategorySettings planner={planner} setPlanner={setPlanner} /><Settings theme={activeTheme.name} freezes={freezes} streak={streak} classroomConnected={classroomConnected} planner={planner} setPlanner={setPlanner} setMessage={setMessage} setStreak={setStreak} /></>}
+      {tab === "Settings" && <><button className="outline-btn" onClick={() => { window.localStorage.removeItem("flowpal-onboarding-complete"); setShowOnboarding(true); }}>Run setup again ↗</button><SchoolScheduleSettings planner={planner} setPlanner={setPlanner} /><RecurringAvailabilitySettings planner={planner} setPlanner={setPlanner} /><CategorySettings planner={planner} setPlanner={setPlanner} /><Settings theme={activeTheme.name} freezes={freezes} streak={streak} classroomConnected={classroomConnected} planner={planner} setPlanner={setPlanner} setMessage={setMessage} setStreak={setStreak} lineLinkCode={lineLinkCode} /></>}
     </section>
     {showAdd && <div className="modal-backdrop"><form className="modal" onSubmit={addTask}><div className="modal-top"><h2>Add a task</h2><button type="button" onClick={() => setShowAdd(false)}>×</button></div><label>Task name<input name="title" placeholder="e.g. Review SAT vocabulary" autoFocus /></label><label>Category<select name="subject" defaultValue={planner.categories[0]}>{planner.categories.map((category) => <option key={category} value={category}>{category}</option>)}</select></label><div className="form-row"><label>Time<input name="time" type="time" defaultValue="18:00" /></label><label>Minutes<input name="duration" type="number" min="5" defaultValue="30" /></label></div><button className="primary-btn" type="submit">Add to my plan →</button></form></div>}
     {showChannel && <div className="modal-backdrop"><div className="modal"><div className="modal-top"><h2>Your companion</h2><button onClick={() => setShowChannel(false)}>×</button></div><p>LINE is connected. Discord and WhatsApp are coming next.</p><button className="primary-btn" onClick={() => { setShowChannel(false); setMessage("LINE is your active FlowPal companion."); }}>Keep LINE connected</button></div></div>}
@@ -524,7 +558,7 @@ function RecurringAvailabilitySettings({ planner, setPlanner }: { planner: Plann
   return <section className="category-settings"><p className="eyebrow">RECURRING BLOCKS</p><h2>Clubs & activities</h2><div className="planner-row"><label>Activity<input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Basketball practice" /></label><label>Starts<input type="time" value={start} onChange={(event) => setStart(event.target.value)} /></label><label>Ends<input type="time" value={end} onChange={(event) => setEnd(event.target.value)} /></label></div><div className="day-checkboxes">{weekdayNames.map((day, index) => <label key={day}><input type="checkbox" checked={days.includes(index)} onChange={() => toggleDay(index)} />{day}</label>)}</div><button className="primary-btn" onClick={addBlock}>Add block →</button>{planner.unavailable.length > 0 && <div className="block-list">{planner.unavailable.map((block) => <div key={block.id}><span><b>{block.title}</b> · {block.days.map((day) => weekdayNames[day].slice(0, 3)).join(", ")} · {block.start}–{block.end}</span><button aria-label={`Delete ${block.title}`} onClick={() => setPlanner({ ...planner, unavailable: planner.unavailable.filter((item) => item.id !== block.id) })}>×</button></div>)}</div>}</section>;
 }
 
-function Settings({ theme, freezes, streak, classroomConnected, planner, setPlanner, setMessage, setStreak }: { theme: string; freezes: number; streak: number; classroomConnected: boolean; planner: PlannerSettings; setPlanner: (settings: PlannerSettings) => void; setMessage: (message: string) => void; setStreak: (value: number) => void }) {
+function Settings({ theme, freezes, streak, classroomConnected, planner, setPlanner, setMessage, setStreak, lineLinkCode }: { theme: string; freezes: number; streak: number; classroomConnected: boolean; planner: PlannerSettings; setPlanner: (settings: PlannerSettings) => void; setMessage: (message: string) => void; setStreak: (value: number) => void; lineLinkCode: string | null }) {
   const [blockTitle, setBlockTitle] = useState("");
   const [blockDay, setBlockDay] = useState(1);
   const [blockStart, setBlockStart] = useState("17:00");
@@ -534,5 +568,5 @@ function Settings({ theme, freezes, streak, classroomConnected, planner, setPlan
     setPlanner({ ...planner, unavailable: [...planner.unavailable, { id: String(Date.now()), title: blockTitle.trim(), days: [blockDay], day: blockDay, start: blockStart, end: blockEnd }] });
     setBlockTitle("");
   };
-  return <section className="settings-card"><p className="eyebrow">SETTINGS</p><h2>Your FlowPal setup</h2><div><b>Companion channel</b><span>LINE connected</span></div><div><b>Google Classroom</b><span>{classroomConnected ? "Connected · only open work from the last 14 days" : "Not connected"}</span></div><button className="primary-btn" onClick={() => { window.location.assign("/api/google/classroom/connect"); }}>{classroomConnected ? "Refresh Google Classroom ↻" : "Connect Google Classroom →"}</button><form className="planner-form" onSubmit={(event) => { event.preventDefault(); setMessage("Your availability was saved. FlowPal rebuilt your schedule around it."); }}><div className="planner-title"><p className="eyebrow">SCHEDULING RULES</p><h3>When can FlowPal schedule you?</h3></div><label>School name<input value={planner.schoolName} onChange={(event) => setPlanner({ ...planner, schoolName: event.target.value })} placeholder="e.g. Mita International" /></label><div className="planner-row"><label>School starts<input type="time" value={planner.schoolStart} onChange={(event) => setPlanner({ ...planner, schoolStart: event.target.value })} /></label><label>School ends<input type="time" value={planner.schoolEnd} onChange={(event) => setPlanner({ ...planner, schoolEnd: event.target.value })} /></label></div><div className="planner-row"><label>Usually asleep by<input type="time" value={planner.sleepTime} onChange={(event) => setPlanner({ ...planner, sleepTime: event.target.value })} /></label><label>Weekend study starts<input type="time" value={planner.weekendStart} onChange={(event) => setPlanner({ ...planner, weekendStart: event.target.value })} /></label></div><label>Maximum study time each day<input type="number" min="30" step="15" value={planner.weekdayLimit} onChange={(event) => setPlanner({ ...planner, weekdayLimit: Number(event.target.value) || 30 })} /><small>minutes · FlowPal will protect your sleep time</small></label><div className="unavailable"><div className="planner-title"><p className="eyebrow">UNAVAILABLE TIME</p><h3>Clubs, lessons, and friend time</h3></div><div className="planner-row"><label>Activity<input value={blockTitle} onChange={(event) => setBlockTitle(event.target.value)} placeholder="Basketball practice" /></label><label>Every<select value={blockDay} onChange={(event) => setBlockDay(Number(event.target.value))}>{weekdayNames.map((day, index) => <option value={index} key={day}>{day}</option>)}</select></label></div><div className="planner-row"><label>Starts<input type="time" value={blockStart} onChange={(event) => setBlockStart(event.target.value)} /></label><label>Ends<input type="time" value={blockEnd} onChange={(event) => setBlockEnd(event.target.value)} /></label></div><button className="outline-btn" type="button" onClick={addUnavailableBlock}>＋ Block this time</button>{planner.unavailable.length > 0 && <div className="block-list">{planner.unavailable.map((block) => <div key={block.id}><span><b>{block.title}</b> · {weekdayNames[block.day]} · {block.start}–{block.end}</span><button type="button" onClick={() => setPlanner({ ...planner, unavailable: planner.unavailable.filter((item) => item.id !== block.id) })}>×</button></div>)}</div>}</div><button className="primary-btn" type="submit">Save schedule rules →</button></form><div><b>Current theme</b><span>{theme}</span></div><div><b>Streak protection</b><span>{freezes} freeze{freezes === 1 ? "" : "s"} available</span></div><button className="outline-btn" onClick={() => { setStreak(streak + 1); setMessage("Demo check-in complete. Your streak moved up by one day."); }}>Demo daily check-in</button></section>;
+  return <section className="settings-card"><p className="eyebrow">SETTINGS</p><h2>Your FlowPal setup</h2><div><b>Companion channel</b><span>{lineLinkCode ? <>Send <strong>link {lineLinkCode}</strong> to FlowPal on LINE to connect reminders.</> : "LINE connection loading…"}</span></div><div><b>Google Classroom</b><span>{classroomConnected ? "Connected · only open work from the last 14 days" : "Not connected"}</span></div><button className="primary-btn" onClick={() => { window.location.assign("/api/google/classroom/connect"); }}>{classroomConnected ? "Refresh Google Classroom ↻" : "Connect Google Classroom →"}</button><form className="planner-form" onSubmit={(event) => { event.preventDefault(); setMessage("Your availability was saved. FlowPal rebuilt your schedule around it."); }}><div className="planner-title"><p className="eyebrow">SCHEDULING RULES</p><h3>When can FlowPal schedule you?</h3></div><label>School name<input value={planner.schoolName} onChange={(event) => setPlanner({ ...planner, schoolName: event.target.value })} placeholder="e.g. Mita International" /></label><div className="planner-row"><label>School starts<input type="time" value={planner.schoolStart} onChange={(event) => setPlanner({ ...planner, schoolStart: event.target.value })} /></label><label>School ends<input type="time" value={planner.schoolEnd} onChange={(event) => setPlanner({ ...planner, schoolEnd: event.target.value })} /></label></div><div className="planner-row"><label>Usually asleep by<input type="time" value={planner.sleepTime} onChange={(event) => setPlanner({ ...planner, sleepTime: event.target.value })} /></label><label>Weekend study starts<input type="time" value={planner.weekendStart} onChange={(event) => setPlanner({ ...planner, weekendStart: event.target.value })} /></label></div><label>Maximum study time each day<input type="number" min="30" step="15" value={planner.weekdayLimit} onChange={(event) => setPlanner({ ...planner, weekdayLimit: Number(event.target.value) || 30 })} /><small>minutes · FlowPal will protect your sleep time</small></label><div className="unavailable"><div className="planner-title"><p className="eyebrow">UNAVAILABLE TIME</p><h3>Clubs, lessons, and friend time</h3></div><div className="planner-row"><label>Activity<input value={blockTitle} onChange={(event) => setBlockTitle(event.target.value)} placeholder="Basketball practice" /></label><label>Every<select value={blockDay} onChange={(event) => setBlockDay(Number(event.target.value))}>{weekdayNames.map((day, index) => <option value={index} key={day}>{day}</option>)}</select></label></div><div className="planner-row"><label>Starts<input type="time" value={blockStart} onChange={(event) => setBlockStart(event.target.value)} /></label><label>Ends<input type="time" value={blockEnd} onChange={(event) => setBlockEnd(event.target.value)} /></label></div><button className="outline-btn" type="button" onClick={addUnavailableBlock}>＋ Block this time</button>{planner.unavailable.length > 0 && <div className="block-list">{planner.unavailable.map((block) => <div key={block.id}><span><b>{block.title}</b> · {weekdayNames[block.day]} · {block.start}–{block.end}</span><button type="button" onClick={() => setPlanner({ ...planner, unavailable: planner.unavailable.filter((item) => item !== block) })}>×</button></div>)}</div>}</div><button className="primary-btn" type="submit">Save schedule rules →</button></form><div><b>Current theme</b><span>{theme}</span></div><div><b>Streak protection</b><span>{freezes} freeze{freezes === 1 ? "" : "s"} available</span></div><button className="outline-btn" onClick={() => { setStreak(streak + 1); setMessage("Demo check-in complete. Your streak moved up by one day."); }}>Demo daily check-in</button></section>;
 }
