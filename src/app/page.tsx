@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, Fragment, useEffect, useMemo, useState } from "react";
 
 type TaskStatus = "upcoming" | "active" | "done";
 type Task = { id: string | number; title: string; subject: string; time: string; duration: number; due: string; dueDate?: string; color: string; status: TaskStatus };
@@ -8,12 +8,13 @@ type Tab = "Overview" | "Calendar" | "Analytics" | "Shop" | "Settings";
 type ClassroomImport = { id: string; title: string; courseName: string; dueLabel: string; dueDate: string; dueTime: string; submissionState: string };
 type UnavailableBlock = { id: string; title: string; days: number[]; day: number; start: string; end: string };
 type CalendarEvent = { id: string; title: string; date: string; start: string; end: string };
+type SchoolBreak = { id: string; title: string; startDate: string; endDate: string };
 type CalendarDisplayEvent = CalendarEvent & { kind: "school" | "club" | "event" };
-type PlannerSettings = { schoolName: string; schoolStart: string; schoolEnd: string; sleepTime: string; weekdayLimit: number; weekendStart: string; unavailable: UnavailableBlock[]; events: CalendarEvent[]; categories: string[]; priorityTaskIds: string[] };
+type PlannerSettings = { schoolName: string; schoolStart: string; schoolEnd: string; schoolDays: number[]; schoolBreaks: SchoolBreak[]; sleepTime: string; weekendSleepTime: string; weekdayLimit: number; weekendStart: string; unavailable: UnavailableBlock[]; events: CalendarEvent[]; categories: string[]; priorityTaskIds: string[] };
 type ScheduledTask = { task: Task; date: Date; time: string; priority: "URGENT" | "HIGH" | "NORMAL" };
 
 const initialTasks: Task[] = [];
-const defaultPlanner: PlannerSettings = { schoolName: "My school", schoolStart: "08:00", schoolEnd: "15:30", weekdayLimit: 180, sleepTime: "23:00", weekendStart: "10:00", unavailable: [], events: [], categories: ["Schoolwork", "Study", "Personal", "Health", "Project"], priorityTaskIds: [] };
+const defaultPlanner: PlannerSettings = { schoolName: "My school", schoolStart: "08:00", schoolEnd: "15:30", schoolDays: [1, 2, 3, 4, 5], schoolBreaks: [], weekdayLimit: 180, sleepTime: "23:00", weekendSleepTime: "00:00", weekendStart: "10:00", unavailable: [], events: [], categories: ["Schoolwork", "Study", "Personal", "Health", "Project"], priorityTaskIds: [] };
 
 const fallbackDate = new Date(2024, 6, 10);
 const weekdayFormatter = new Intl.DateTimeFormat("en-US", { weekday: "long", month: "long", day: "numeric" });
@@ -70,6 +71,11 @@ function minutesToTime(total: number) {
   return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
 }
 
+function sleepCutoff(value: string) {
+  const minutes = timeToMinutes(value);
+  return minutes === 0 ? 24 * 60 : minutes;
+}
+
 function taskPriority(task: Task, today: Date): ScheduledTask["priority"] {
   const due = taskDueDate(task);
   if (!due) return "NORMAL";
@@ -80,9 +86,15 @@ function taskPriority(task: Task, today: Date): ScheduledTask["priority"] {
   return "NORMAL";
 }
 
+function isSchoolDay(day: Date, settings: PlannerSettings) {
+  const key = localDateKey(day);
+  const onBreak = settings.schoolBreaks.some((breakPeriod) => key >= breakPeriod.startDate && key <= breakPeriod.endDate);
+  return settings.schoolDays.includes(day.getDay()) && !onBreak;
+}
+
 function calendarEventsForDay(day: Date, settings: PlannerSettings): CalendarDisplayEvent[] {
   const events: CalendarDisplayEvent[] = [];
-  if (day.getDay() >= 1 && day.getDay() <= 5) {
+  if (isSchoolDay(day, settings)) {
     events.push({ id: `school-${localDateKey(day)}`, title: settings.schoolName || "School", date: localDateKey(day), start: settings.schoolStart, end: settings.schoolEnd, kind: "school" });
   }
   settings.unavailable.filter((block) => block.days.includes(day.getDay())).forEach((block) => {
@@ -127,11 +139,10 @@ function buildSchedule(tasks: Task[], today: Date, settings: PlannerSettings): S
     let selected: Date | null = null;
     let startTime = 0;
     const tryScheduleDay = (cursor: Date) => {
-      const weekday = cursor.getDay() >= 1 && cursor.getDay() <= 5;
-      const normalStart = weekday ? Math.max(timeToMinutes(settings.schoolEnd) + 30, 16 * 60) : timeToMinutes(settings.weekendStart);
+      const normalStart = isSchoolDay(cursor, settings) ? Math.max(timeToMinutes(settings.schoolEnd) + 30, 16 * 60) : timeToMinutes(settings.weekendStart);
       const currentMinute = now.getHours() * 60 + now.getMinutes() + 10;
       const dayStart = sameDay(cursor, now) ? Math.max(normalStart, currentMinute) : normalStart;
-      const dayEnd = timeToMinutes(settings.sleepTime) - 30;
+      const dayEnd = sleepCutoff(isSchoolDay(cursor, settings) ? settings.sleepTime : settings.weekendSleepTime) - 30;
       const key = cursor.toISOString().slice(0, 10);
       const used = usedMinutes.get(key) ?? 0;
       const candidateStart = movePastUnavailable(nextAvailableMinute.get(key) ?? dayStart, task.duration, cursor, settings);
@@ -197,6 +208,7 @@ export default function Home() {
   const [showAdd, setShowAdd] = useState(false);
   const [showChannel, setShowChannel] = useState(false);
   const [showPal, setShowPal] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(false);
   const [classroomConnected, setClassroomConnected] = useState(false);
   const [planner, setPlanner] = useState<PlannerSettings>(defaultPlanner);
   const completed = tasks.filter((task) => task.status === "done").length;
@@ -211,6 +223,10 @@ export default function Home() {
     syncDate();
     const interval = window.setInterval(syncDate, 60_000);
     return () => window.clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    setShowOnboarding(!window.localStorage.getItem("flowpal-onboarding-complete"));
   }, []);
 
   useEffect(() => {
@@ -299,6 +315,15 @@ export default function Home() {
     setFreezes((value) => value + 1);
     setMessage("Streak freeze added. It will protect one missed day.");
   }
+  function logOut() {
+    fetch("/api/google/logout", { method: "POST" }).catch(() => undefined);
+    window.localStorage.removeItem("flowpal-planner-settings");
+    setTasks([]);
+    setPlanner(defaultPlanner);
+    setClassroomConnected(false);
+    setTab("Overview");
+    setMessage("Signed out locally.");
+  }
 
   const navItems: Tab[] = ["Overview", "Calendar", "Analytics", "Shop", "Settings"];
   return <main className={`theme-${previewTheme ?? theme} ${previewTheme ? "is-previewing" : ""}`} style={{ "--accent": activeTheme.color } as React.CSSProperties}>
@@ -307,7 +332,7 @@ export default function Home() {
       <p className="brand-sub">STAY IN FLOW.</p>
       <nav>{navItems.map((item) => <button key={item} onClick={() => setTab(item)} className={tab === item ? "nav-item selected" : "nav-item"}><span>{item === "Overview" ? "▦" : item === "Calendar" ? "▣" : item === "Analytics" ? "↗" : item === "Shop" ? "✦" : "⚙"}</span>{item}</button>)}</nav>
       <div className="companion"><div className="spark">✦</div><b>PAL · YOUR COMPANION</b><p>Ask about your plan or reschedule.</p><button className="tiny-button" onClick={() => setShowPal(true)}>Talk to Pal ↗</button></div>
-      <button className="profile" onClick={() => setTab("Settings")}><div className="avatar">S</div><div><b>Souto</b><small>Level 8 · {points.toLocaleString()} points</small></div><span>⌄</span></button>
+      <button className="profile" onClick={() => setTab("Settings")}><div className="avatar">S</div><div><b>Souto</b><small>Level 8 · {points.toLocaleString()} points</small></div><span>⌄</span></button><button className="logout-btn" onClick={logOut}>Log out</button>
     </aside>
     <section className="content" id="top">
       <header><div><p className="eyebrow">{weekdayFormatter.format(currentDate).toUpperCase()}</p><h1>{tab === "Overview" ? `${greeting}, Souto` : tab} <span>✦</span></h1><p className="muted">{tab === "Overview" ? "Here’s your plan for today." : `Your ${tab.toLowerCase()} is ready.`}</p></div><button className="outline-btn" onClick={() => setShowAdd(true)}>＋ Add task</button></header>
@@ -316,12 +341,29 @@ export default function Home() {
       {tab === "Calendar" && <Calendar tasks={tasks} startTask={startTask} date={currentDate} planner={planner} setPlanner={setPlanner} />}
       {tab === "Analytics" && <Analytics tasks={tasks} points={points} streak={streak} />}
       {tab === "Shop" && <Shop points={points} theme={theme} previewTheme={previewTheme} unlockedThemes={unlockedThemes} freezes={freezes} buyTheme={buyTheme} buyFreeze={buyFreeze} setPreviewTheme={setPreviewTheme} />}
-      {tab === "Settings" && <><RecurringAvailabilitySettings planner={planner} setPlanner={setPlanner} /><CategorySettings planner={planner} setPlanner={setPlanner} /><Settings theme={activeTheme.name} freezes={freezes} streak={streak} classroomConnected={classroomConnected} planner={planner} setPlanner={setPlanner} setMessage={setMessage} setStreak={setStreak} /></>}
+      {tab === "Settings" && <><button className="outline-btn" onClick={() => { window.localStorage.removeItem("flowpal-onboarding-complete"); setShowOnboarding(true); }}>Run setup again ↗</button><SchoolScheduleSettings planner={planner} setPlanner={setPlanner} /><RecurringAvailabilitySettings planner={planner} setPlanner={setPlanner} /><CategorySettings planner={planner} setPlanner={setPlanner} /><Settings theme={activeTheme.name} freezes={freezes} streak={streak} classroomConnected={classroomConnected} planner={planner} setPlanner={setPlanner} setMessage={setMessage} setStreak={setStreak} /></>}
     </section>
     {showAdd && <div className="modal-backdrop"><form className="modal" onSubmit={addTask}><div className="modal-top"><h2>Add a task</h2><button type="button" onClick={() => setShowAdd(false)}>×</button></div><label>Task name<input name="title" placeholder="e.g. Review SAT vocabulary" autoFocus /></label><label>Category<select name="subject" defaultValue={planner.categories[0]}>{planner.categories.map((category) => <option key={category} value={category}>{category}</option>)}</select></label><div className="form-row"><label>Time<input name="time" type="time" defaultValue="18:00" /></label><label>Minutes<input name="duration" type="number" min="5" defaultValue="30" /></label></div><button className="primary-btn" type="submit">Add to my plan →</button></form></div>}
     {showChannel && <div className="modal-backdrop"><div className="modal"><div className="modal-top"><h2>Your companion</h2><button onClick={() => setShowChannel(false)}>×</button></div><p>LINE is connected. Discord and WhatsApp are coming next.</p><button className="primary-btn" onClick={() => { setShowChannel(false); setMessage("LINE is your active FlowPal companion."); }}>Keep LINE connected</button></div></div>}
     {showPal && <PalChat tasks={tasks} date={currentDate} planner={planner} setPlanner={setPlanner} onClose={() => setShowPal(false)} />}
+    {showOnboarding && <Onboarding planner={planner} setPlanner={setPlanner} onComplete={() => { window.localStorage.setItem("flowpal-onboarding-complete", "true"); setShowOnboarding(false); setMessage("Your FlowPal schedule is ready."); }} />}
   </main>;
+}
+
+function Onboarding({ planner, setPlanner, onComplete }: { planner: PlannerSettings; setPlanner: (settings: PlannerSettings) => void; onComplete: () => void }) {
+  const [step, setStep] = useState(0);
+  const [activity, setActivity] = useState("");
+  const [days, setDays] = useState<number[]>([]);
+  const [start, setStart] = useState("17:00");
+  const [end, setEnd] = useState("19:00");
+  const toggleDay = (day: number) => setDays((current) => current.includes(day) ? current.filter((item) => item !== day) : [...current, day]);
+  const addActivity = () => {
+    if (!activity.trim() || !days.length || end <= start) return;
+    setPlanner({ ...planner, unavailable: [...planner.unavailable, { id: String(Date.now()), title: activity.trim(), days, day: days[0], start, end }] });
+    setActivity(""); setDays([]);
+  };
+  const connectClassroom = () => { onComplete(); window.location.assign("/api/google/classroom/connect"); };
+  return <div className="modal-backdrop"><section className="modal onboarding"><p className="eyebrow">WELCOME TO FLOWPAL · {step + 1}/3</p>{step === 0 && <><h2>Build your flow.</h2><p>Tell FlowPal when school and sleep happen.</p><label>School name<input value={planner.schoolName} onChange={(event) => setPlanner({ ...planner, schoolName: event.target.value })} /></label><div className="form-row"><label>School starts<input type="time" value={planner.schoolStart} onChange={(event) => setPlanner({ ...planner, schoolStart: event.target.value })} /></label><label>School ends<input type="time" value={planner.schoolEnd} onChange={(event) => setPlanner({ ...planner, schoolEnd: event.target.value })} /></label></div><div className="form-row"><label>School-night sleep<input type="time" value={planner.sleepTime} onChange={(event) => setPlanner({ ...planner, sleepTime: event.target.value })} /></label><label>Weekend sleep<input type="time" value={planner.weekendSleepTime} onChange={(event) => setPlanner({ ...planner, weekendSleepTime: event.target.value })} /></label></div><button className="primary-btn" onClick={() => setStep(1)}>Next →</button></>}{step === 1 && <><h2>Protect your time.</h2><p>Add anything FlowPal should schedule around.</p><label>Activity<input value={activity} onChange={(event) => setActivity(event.target.value)} placeholder="Basketball practice" /></label><div className="form-row"><label>Starts<input type="time" value={start} onChange={(event) => setStart(event.target.value)} /></label><label>Ends<input type="time" value={end} onChange={(event) => setEnd(event.target.value)} /></label></div><div className="day-checkboxes">{weekdayNames.map((day, index) => <label key={day}><input type="checkbox" checked={days.includes(index)} onChange={() => toggleDay(index)} />{day.slice(0, 3)}</label>)}</div><button className="outline-btn" onClick={addActivity}>Add activity</button><div className="onboarding-actions"><button className="outline-btn" onClick={() => setStep(0)}>← Back</button><button className="primary-btn" onClick={() => setStep(2)}>Next →</button></div></>}{step === 2 && <><h2>Connect your assignments.</h2><p>Google Classroom imports your open schoolwork into this plan. You can also do this later in Settings.</p><div className="onboarding-actions"><button className="outline-btn" onClick={() => setStep(1)}>← Back</button><button className="outline-btn" onClick={onComplete}>Skip for now</button><button className="primary-btn" onClick={connectClassroom}>Connect Classroom →</button></div></>}</section></div>;
 }
 
 function Overview({ tasks, completed, totalMinutes, active, streak, freezes, points, startTask, finishTask, setTab, date, planner, setPlanner }: { tasks: Task[]; completed: number; totalMinutes: number; active?: Task; streak: number; freezes: number; points: number; startTask: (id: Task["id"]) => void; finishTask: (id: Task["id"]) => void; setTab: (tab: Tab) => void; date: Date; planner: PlannerSettings; setPlanner: (settings: PlannerSettings) => void }) {
@@ -367,7 +409,13 @@ function MonthCalendar({ tasks, startTask, date, planner, setPlanner, schedule }
 function DayTimeline({ schedule, day, events = [], startTask, overview = false }: { schedule: ScheduledTask[]; day: Date; events?: CalendarDisplayEvent[]; startTask: (id: Task["id"]) => void; overview?: boolean }) {
   const planned = schedule.filter((item) => sameDay(item.date, day));
   const dayTitle = new Intl.DateTimeFormat("en-US", { weekday: "long", month: "long", day: "numeric" }).format(day);
-  return <section className={`day-timeline ${overview ? "overview-timeline" : ""}`}><div className="section-heading"><div><p className="eyebrow">DAY PLAN</p><h2>{overview ? "Today’s schedule" : dayTitle}</h2></div><span className="timeline-note">{overview ? "Built from deadlines, school, clubs, and your availability" : "This timeline includes school, clubs, events, and planned work"}</span></div>{events.length > 0 && <div className="timeline-list events-list">{events.map((event) => <article className={`timeline-task calendar-event ${event.kind}`} key={event.id}><time>{event.start}</time><div><b>{event.title}</b><span>{event.kind === "school" ? `School · until ${event.end}` : event.kind === "club" ? `Recurring activity · until ${event.end}` : `Unavailable until ${event.end}`}</span></div></article>)}</div>}{planned.length ? <div className="timeline-list">{planned.map(({ task, time, priority }) => <article className="timeline-task" key={task.id}><time>{time}</time><div><b>{task.title}</b><span><i className={`priority ${priority.toLowerCase()}`}>{priority}</i>{task.subject} · {task.duration} min · {task.due}</span></div><button className="start" onClick={() => startTask(task.id)}>Start now →</button></article>)}</div> : <div className="empty-tasks"><b>{events.length ? "No study sessions around these blocks." : "No study sessions planned."}</b><span>Choose another date or add a task.</span></div>}</section>;
+  const items = [...events.map((event) => ({ type: "event" as const, id: event.id, at: timeToMinutes(event.start), event })), ...planned.map((session) => ({ type: "task" as const, id: String(session.task.id), at: timeToMinutes(session.time), session }))].sort((a, b) => a.at - b.at);
+  const showNow = sameDay(day, new Date());
+  const currentMinutes = new Date().getHours() * 60 + new Date().getMinutes();
+  const nextItemIndex = items.findIndex((item) => item.at >= currentMinutes);
+  const markerIndex = showNow ? (nextItemIndex === -1 ? items.length : nextItemIndex) : -1;
+  const nowMarker = <div className="now-marker"><span>NOW</span><i /><small>{minutesToTime(currentMinutes)}</small></div>;
+  return <section className={`day-timeline ${overview ? "overview-timeline" : ""}`}><div className="section-heading"><div><p className="eyebrow">DAY PLAN</p><h2>{overview ? "Today’s schedule" : dayTitle}</h2></div><span className="timeline-note">{overview ? "Built from deadlines, school, clubs, and your availability" : "This timeline includes school, clubs, events, and planned work"}</span></div>{items.length ? <div className="timeline-list">{items.map((item, index) => <Fragment key={`${item.type}-${item.id}`}>{markerIndex === index && nowMarker}{item.type === "event" ? <article className={`timeline-task calendar-event ${item.event.kind}`}><time>{item.event.start}</time><div><b>{item.event.title}</b><span>{item.event.kind === "school" ? `School · until ${item.event.end}` : item.event.kind === "club" ? `Recurring activity · until ${item.event.end}` : `Unavailable until ${item.event.end}`}</span></div></article> : <article className="timeline-task"><time>{item.session.time}</time><div><b>{item.session.task.title}</b><span><i className={`priority ${item.session.priority.toLowerCase()}`}>{item.session.priority}</i>{item.session.task.subject} · {item.session.task.duration} min · {item.session.task.due}</span></div><button className="start" onClick={() => startTask(item.session.task.id)}>Start now →</button></article>}</Fragment>)}{markerIndex === items.length && nowMarker}</div> : <div className="empty-tasks">{showNow && nowMarker}<b>{events.length ? "No study sessions around these blocks." : "No study sessions planned."}</b><span>Choose another date or add a task.</span></div>}</section>;
 }
 
 function PalChat({ tasks, date, planner, setPlanner, onClose }: { tasks: Task[]; date: Date; planner: PlannerSettings; setPlanner: (settings: PlannerSettings) => void; onClose: () => void }) {
@@ -448,6 +496,19 @@ function CategorySettings({ planner, setPlanner }: { planner: PlannerSettings; s
   return <section className="category-settings"><p className="eyebrow">TASK CATEGORIES</p><h2>Make your own categories.</h2><div className="category-chips">{planner.categories.map((item) => <span key={item}>{item}{!defaultPlanner.categories.includes(item) && <button onClick={() => setPlanner({ ...planner, categories: planner.categories.filter((category) => category !== item) })}>×</button>}</span>)}</div><div className="category-add"><input value={category} onChange={(event) => setCategory(event.target.value)} placeholder="e.g. SAT prep" onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addCategory(); } }} /><button className="outline-btn" onClick={addCategory}>Add category</button></div></section>;
 }
 
+function SchoolScheduleSettings({ planner, setPlanner }: { planner: PlannerSettings; setPlanner: (settings: PlannerSettings) => void }) {
+  const [breakStart, setBreakStart] = useState("");
+  const [breakEnd, setBreakEnd] = useState("");
+  const toggleSchoolDay = (day: number) => setPlanner({ ...planner, schoolDays: planner.schoolDays.includes(day) ? planner.schoolDays.filter((item) => item !== day) : [...planner.schoolDays, day].sort() });
+  const addBreak = () => {
+    if (!breakStart || !breakEnd || breakEnd < breakStart) return;
+    setPlanner({ ...planner, schoolBreaks: [...planner.schoolBreaks, { id: String(Date.now()), title: "School break", startDate: breakStart, endDate: breakEnd }] });
+    setBreakStart("");
+    setBreakEnd("");
+  };
+  return <section className="category-settings school-schedule"><p className="eyebrow">SCHOOL & SLEEP</p><h2>When are you available?</h2><label>School name<input value={planner.schoolName} onChange={(event) => setPlanner({ ...planner, schoolName: event.target.value })} placeholder="My school" /></label><div className="planner-row"><label>School starts<input type="time" value={planner.schoolStart} onChange={(event) => setPlanner({ ...planner, schoolStart: event.target.value })} /></label><label>School ends<input type="time" value={planner.schoolEnd} onChange={(event) => setPlanner({ ...planner, schoolEnd: event.target.value })} /></label></div><div className="day-checkboxes">{weekdayNames.map((day, index) => <label key={day}><input type="checkbox" checked={planner.schoolDays.includes(index)} onChange={() => toggleSchoolDay(index)} />{day}</label>)}</div><div className="planner-row"><label>Sleep on school nights<input type="time" value={planner.sleepTime} onChange={(event) => setPlanner({ ...planner, sleepTime: event.target.value })} /></label><label>Sleep on non-school nights<input type="time" value={planner.weekendSleepTime} onChange={(event) => setPlanner({ ...planner, weekendSleepTime: event.target.value })} /></label></div><div className="planner-row"><label>Break starts<input type="date" value={breakStart} onChange={(event) => setBreakStart(event.target.value)} /></label><label>Break ends<input type="date" value={breakEnd} onChange={(event) => setBreakEnd(event.target.value)} /></label></div><button className="outline-btn" onClick={addBreak}>Add break</button>{planner.schoolBreaks.length > 0 && <div className="block-list">{planner.schoolBreaks.map((breakPeriod) => <div key={breakPeriod.id}><span><b>{breakPeriod.title}</b> · {breakPeriod.startDate}–{breakPeriod.endDate}</span><button aria-label="Delete school break" onClick={() => setPlanner({ ...planner, schoolBreaks: planner.schoolBreaks.filter((item) => item.id !== breakPeriod.id) })}>×</button></div>)}</div>}</section>;
+}
+
 function RecurringAvailabilitySettings({ planner, setPlanner }: { planner: PlannerSettings; setPlanner: (settings: PlannerSettings) => void }) {
   const [title, setTitle] = useState("");
   const [days, setDays] = useState<number[]>([]);
@@ -460,7 +521,7 @@ function RecurringAvailabilitySettings({ planner, setPlanner }: { planner: Plann
     setTitle("");
     setDays([]);
   };
-  return <section className="category-settings"><p className="eyebrow">RECURRING UNAVAILABLE TIME</p><h2>Block clubs on multiple days.</h2><div className="planner-row"><label>Activity<input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Basketball practice" /></label><label>Starts<input type="time" value={start} onChange={(event) => setStart(event.target.value)} /></label><label>Ends<input type="time" value={end} onChange={(event) => setEnd(event.target.value)} /></label></div><div className="day-checkboxes">{weekdayNames.map((day, index) => <label key={day}><input type="checkbox" checked={days.includes(index)} onChange={() => toggleDay(index)} />{day}</label>)}</div><button className="primary-btn" onClick={addBlock}>Add recurring block →</button></section>;
+  return <section className="category-settings"><p className="eyebrow">RECURRING BLOCKS</p><h2>Clubs & activities</h2><div className="planner-row"><label>Activity<input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Basketball practice" /></label><label>Starts<input type="time" value={start} onChange={(event) => setStart(event.target.value)} /></label><label>Ends<input type="time" value={end} onChange={(event) => setEnd(event.target.value)} /></label></div><div className="day-checkboxes">{weekdayNames.map((day, index) => <label key={day}><input type="checkbox" checked={days.includes(index)} onChange={() => toggleDay(index)} />{day}</label>)}</div><button className="primary-btn" onClick={addBlock}>Add block →</button>{planner.unavailable.length > 0 && <div className="block-list">{planner.unavailable.map((block) => <div key={block.id}><span><b>{block.title}</b> · {block.days.map((day) => weekdayNames[day].slice(0, 3)).join(", ")} · {block.start}–{block.end}</span><button aria-label={`Delete ${block.title}`} onClick={() => setPlanner({ ...planner, unavailable: planner.unavailable.filter((item) => item.id !== block.id) })}>×</button></div>)}</div>}</section>;
 }
 
 function Settings({ theme, freezes, streak, classroomConnected, planner, setPlanner, setMessage, setStreak }: { theme: string; freezes: number; streak: number; classroomConnected: boolean; planner: PlannerSettings; setPlanner: (settings: PlannerSettings) => void; setMessage: (message: string) => void; setStreak: (value: number) => void }) {
