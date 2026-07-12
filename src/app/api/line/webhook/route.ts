@@ -15,13 +15,43 @@ function validSignature(body: string, signature: string | null, secret: string) 
   return expected.length === signature.length && crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(signature));
 }
 
-function palReply(text: string) {
+async function palReply(text: string, lineUserId?: string) {
   const message = text.trim().toLowerCase();
-  if (message.startsWith("start ")) return `Nice — I started ${text.trim().slice(6)}. Send “finish ${text.trim().slice(6)}” when you’re done.`;
+  const requestedTitle = text.trim().replace(/^(start|finish|done)\s+/i, "").trim();
+  let userId: string | undefined;
+  try {
+    if (lineUserId) {
+      const supabase = getSupabaseServer();
+      const { data: profile } = await supabase.from("flowpal_users").select("id").eq("line_user_id", lineUserId).maybeSingle();
+      userId = profile?.id;
+
+      if (userId && (message.includes("my tasks") || message.includes("tasks for today") || message.includes("what do i have"))) {
+        const { data: tasks } = await supabase.from("tasks").select("title, duration_minutes, due_label").eq("user_id", userId).neq("status", "done").order("due_at", { ascending: true, nullsFirst: false }).limit(6);
+        if (!tasks?.length) return "You’re clear right now — no unfinished FlowPal tasks saved. ✨";
+        return `You have ${tasks.length} task${tasks.length === 1 ? "" : "s"} left:\n${tasks.map((task) => `• ${task.title} · ${task.duration_minutes} min${task.due_label ? ` · ${task.due_label}` : ""}`).join("\n")}`;
+      }
+
+      if (userId && (message.startsWith("start ") || message.startsWith("finish ") || message.startsWith("done ")) && requestedTitle) {
+        const { data: matches } = await supabase.from("tasks").select("id, title").eq("user_id", userId).neq("status", "done").ilike("title", `%${requestedTitle}%`).limit(1);
+        const task = matches?.[0];
+        if (task) {
+          const finishing = message.startsWith("finish ") || message.startsWith("done ");
+          await supabase.from("tasks").update(finishing ? { status: "done", completed_at: new Date().toISOString() } : { status: "active" }).eq("id", task.id);
+          return finishing
+            ? `Logged — ${task.title} is complete. Nice work! Check FlowPal for your updated plan.`
+            : `Nice — I started ${task.title}. Send “finish ${task.title}” when you’re done.`;
+        }
+      }
+    }
+  } catch (error) {
+    console.error("Could not update FlowPal task from LINE:", error);
+  }
+
+  if (message.startsWith("start ")) return `Nice — I started ${requestedTitle}. Send “finish ${requestedTitle}” when you’re done.`;
   if (message.startsWith("finish ") || message.startsWith("done")) return "Logged! Great work — check FlowPal to see your updated plan.";
   if (message.includes("break")) return "Take the break. Open FlowPal when you’re ready and I’ll help you replan.";
   if (message.includes("next") || message.includes("what should")) return "Open FlowPal and ask Pal for your next task. Your live schedule is there.";
-  return "I’m Pal from FlowPal. Try “start Physics,” “finish Physics,” “I need a 30 min break,” or “what’s next?”";
+  return "I’m Pal from FlowPal. Try “my tasks,” “start Physics,” “finish Physics,” “I need a 30 min break,” or “what’s next?”";
 }
 
 async function reply(replyToken: string, text: string, token: string) {
@@ -64,7 +94,7 @@ export async function POST(request: Request) {
       }
     }
     if (event.type === "follow") return reply(event.replyToken, "Hey, I’m Pal! Message me when you start or finish work, and I’ll keep you moving.", token);
-    if (event.type === "message" && event.message?.type === "text") return reply(event.replyToken, palReply(text), token);
+    if (event.type === "message" && event.message?.type === "text") return reply(event.replyToken, await palReply(text, lineUserId), token);
   }));
   return NextResponse.json({ ok: true });
 }
