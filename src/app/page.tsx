@@ -91,7 +91,7 @@ export default function Home() {
   }
 
   const navItems: Tab[] = ["Overview", "Calendar", "Analytics", "Shop", "Settings"];
-  return <main className={`theme-${theme}`} style={{ "--accent": activeTheme.color } as React.CSSProperties}>
+  return <main className={`theme-${previewTheme ?? theme} ${previewTheme ? "is-previewing" : ""}`} style={{ "--accent": activeTheme.color } as React.CSSProperties}>
     <aside className="sidebar">
       <button className="brand" onClick={() => setTab("Overview")}><span>✦</span> FLOWPAL</button>
       <p className="brand-sub">STAY IN FLOW.</p>
